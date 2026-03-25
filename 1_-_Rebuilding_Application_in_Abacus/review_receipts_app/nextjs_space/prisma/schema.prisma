@@ -1,0 +1,100 @@
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+    output = "/home/ubuntu/review_receipts_app/nextjs_space/node_modules/.prisma/client"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  password      String?   // Optional for OAuth users
+  image         String?   // Profile image from OAuth provider
+  emailVerified DateTime? // Email verification timestamp for OAuth
+  role          String    @default("user") // "user" or "admin"
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  receipts      Receipt[]
+  adminActions  AdminAction[]
+  accounts      Account[]
+}
+
+model Account {
+  id                       String  @id @default(cuid())
+  userId                   String
+  type                     String
+  provider                 String
+  providerAccountId        String
+  refresh_token            String? @db.Text
+  access_token             String? @db.Text
+  expires_at               Int?
+  token_type               String?
+  scope                    String?
+  id_token                 String? @db.Text
+  session_state            String?
+  refresh_token_expires_in Int?    // Google returns this field
+  user                     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Receipt {
+  id                  String    @id @default(cuid())
+  userId              String
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // File info
+  cloudStoragePath    String
+  isPublic            Boolean   @default(false)
+  originalFilename    String
+  fileType            String    // "image" or "pdf"
+  fileSize            Int
+  
+  // Archive
+  isArchived          Boolean   @default(false)
+  archivedAt          DateTime?
+  
+  // Extracted data from OCR (primary data source)
+  extractedShopName   String?
+  extractedDate       DateTime?
+  extractedAmount     Float?
+  ocrConfidence       Int?      // 0-100
+  ocrReasoning        String?
+  
+  // Verification results
+  receiptReadable     Boolean?
+  verificationStatus  String    @default("pending") // pending, verified, rejected, flagged
+  
+  // Fraud detection
+  imageHash           String?   // perceptual hash for duplicate detection
+  isDuplicate         Boolean   @default(false)
+  duplicateOfId       String?   // ID of original receipt if duplicate
+  manipulationScore   Int?      // 0-100, higher = more likely manipulated
+  manipulationFlags   String?   // JSON array of manipulation indicators
+  suspiciousPatterns  String?   // JSON array of suspicious pattern flags
+  fraudRiskScore      Int?      // 0-100 overall fraud risk
+  
+  // Timestamps
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  processedAt         DateTime?
+  
+  // Admin actions
+  adminActions        AdminAction[]
+}
+
+model AdminAction {
+  id            String    @id @default(cuid())
+  adminId       String
+  admin         User      @relation(fields: [adminId], references: [id])
+  receiptId     String
+  receipt       Receipt   @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  action        String    // "approve", "reject", "flag", "download"
+  notes         String?
+  createdAt     DateTime  @default(now())
+}
