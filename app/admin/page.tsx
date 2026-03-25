@@ -112,12 +112,14 @@ export default function AdminPage() {
   const [receipts, setReceipts] = useState<ReceiptData[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("all");
-  const [activeTab, setActiveTab] = useState<"queue" | "stats">("queue");
+  const [activeTab, setActiveTab] = useState<"queue" | "stats" | "users">("queue");
   const [selectedReceipt, setSelectedReceipt] = useState<ReceiptData | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [showEmailModal, setShowEmailModal] = useState(false);
+  const [users, setUsers] = useState<any[]>([]);
+  const [updatingUser, setUpdatingUser] = useState<string | null>(null);
 
   const isAdmin = (session?.user as any)?.role === "admin";
 
@@ -131,9 +133,10 @@ export default function AdminPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [statsRes, receiptsRes] = await Promise.all([
+      const [statsRes, receiptsRes, usersRes] = await Promise.all([
         fetch("/api/admin/stats"),
-        fetch("/api/receipts")
+        fetch("/api/receipts"),
+        fetch("/api/admin/users")
       ]);
 
       if (statsRes.ok) {
@@ -145,12 +148,36 @@ export default function AdminPage() {
         const receiptsData = await receiptsRes.json();
         setReceipts(receiptsData);
       }
+
+      if (usersRes.ok) {
+        const usersData = await usersRes.json();
+        setUsers(usersData);
+      }
     } catch (error) {
       console.error("Failed to fetch admin data:", error);
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const handleRoleChange = async (userId: string, newRole: string) => {
+    setUpdatingUser(userId);
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, role: newRole })
+      });
+      if (res.ok) {
+        setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
+        toast({ title: "Rol bijgewerkt", description: `Gebruiker is nu ${newRole}` });
+      }
+    } catch {
+      toast({ title: "Fout", description: "Rol bijwerken mislukt", variant: "destructive" });
+    } finally {
+      setUpdatingUser(null);
+    }
+  };
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -402,7 +429,7 @@ export default function AdminPage() {
         </div>
 
         {/* Tabs */}
-        <div className="mb-6 flex gap-2">
+        <div className="mb-6 flex gap-2 flex-wrap">
           <button
             onClick={() => setActiveTab("queue")}
             className={`flex items-center gap-2 rounded-lg px-4 py-2 font-medium transition-colors ${
@@ -415,6 +442,17 @@ export default function AdminPage() {
             Review Queue
           </button>
           <button
+            onClick={() => setActiveTab("users")}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 font-medium transition-colors ${
+              activeTab === "users"
+                ? "bg-kv-green text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            <Users className="h-4 w-4" />
+            Gebruikers
+          </button>
+          <button
             onClick={() => setActiveTab("stats")}
             className={`flex items-center gap-2 rounded-lg px-4 py-2 font-medium transition-colors ${
               activeTab === "stats"
@@ -423,7 +461,7 @@ export default function AdminPage() {
             }`}
           >
             <BarChart3 className="h-4 w-4" />
-            Statistics
+            Statistieken
           </button>
         </div>
 
@@ -683,7 +721,73 @@ export default function AdminPage() {
               )}
             </div>
           </div>
-        )}
+        ) : activeTab === "users" ? (
+          <div className="rounded-xl bg-white shadow-sm overflow-hidden">
+            <div className="border-b px-6 py-4 flex items-center justify-between">
+              <h3 className="font-semibold text-gray-900">Gebruikersbeheer</h3>
+              <span className="text-sm text-gray-500">{users.length} gebruikers</span>
+            </div>
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Gebruiker</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bonnetjes</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Lid sinds</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rol</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actie</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {users.map(u => (
+                  <tr key={u.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-kv-green/10 text-sm font-semibold text-kv-green">
+                          {(u.name || u.email || "?").charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-900 text-sm">{u.name || "—"}</p>
+                          <p className="text-xs text-gray-500">{u.email}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-700">{u._count?.receipts ?? 0}</td>
+                    <td className="px-4 py-3 text-sm text-gray-500">
+                      {u.createdAt ? new Date(u.createdAt).toLocaleDateString("nl-NL") : "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                        u.role === "admin" ? "bg-kv-green/10 text-kv-green" : "bg-gray-100 text-gray-600"
+                      }`}>
+                        {u.role === "admin" ? "Admin" : "Gebruiker"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {updatingUser === u.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin ml-auto text-gray-400" />
+                      ) : u.role === "admin" ? (
+                        <button
+                          onClick={() => handleRoleChange(u.id, "user")}
+                          disabled={u.email === "marketing@kiyoh.co.za"}
+                          className="rounded-lg border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                          Maak gebruiker
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleRoleChange(u.id, "admin")}
+                          className="rounded-lg bg-kv-green/10 px-3 py-1 text-xs font-medium text-kv-green hover:bg-kv-green/20"
+                        >
+                          Maak admin
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </main>
 
       {/* Receipt Preview Modal */}

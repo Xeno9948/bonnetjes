@@ -82,17 +82,33 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user, account }) {
       if (user) {
         token.id = user.id;
-        // Get role from database
-        const dbUser = await prisma.user.findUnique({
-          where: { id: user.id }
-        });
-        token.role = dbUser?.role || "user";
       }
       // Store access token for Google Drive API calls
       if (account) {
         token.accessToken = account.access_token;
         token.refreshToken = account.refresh_token;
         token.provider = account.provider;
+      }
+      // Always fetch fresh role from DB (so changes take effect without re-login)
+      if (token.id) {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: token.id as string },
+          select: { role: true, email: true }
+        });
+        // Hardcoded super-admins
+        const SUPER_ADMINS = ["marketing@kiyoh.co.za"];
+        if (dbUser) {
+          token.role = SUPER_ADMINS.includes(dbUser.email ?? "")
+            ? "admin"
+            : dbUser.role;
+          // Auto-promote super admins in DB too
+          if (SUPER_ADMINS.includes(dbUser.email ?? "") && dbUser.role !== "admin") {
+            await prisma.user.update({
+              where: { id: token.id as string },
+              data: { role: "admin" }
+            });
+          }
+        }
       }
       return token;
     },
