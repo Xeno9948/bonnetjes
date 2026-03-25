@@ -465,7 +465,7 @@ export default function AdminPage() {
           </button>
         </div>
 
-        {activeTab === "queue" ? (
+        {activeTab === "queue" && (
           <>
             {/* Filter */}
             <div className="mb-6 flex items-center gap-4">
@@ -659,7 +659,9 @@ export default function AdminPage() {
               </div>
             )}
           </>
-        ) : (
+        )}
+
+        {activeTab === "stats" && (
           <div className="space-y-6">
             {/* Fraud Statistics */}
             <div className="rounded-xl bg-white p-6 shadow-sm">
@@ -721,7 +723,9 @@ export default function AdminPage() {
               )}
             </div>
           </div>
-        ) : activeTab === "users" ? (
+        )}
+
+        {activeTab === "users" && (
           <div className="rounded-xl bg-white shadow-sm overflow-hidden">
             <div className="border-b px-6 py-4 flex items-center justify-between">
               <h3 className="font-semibold text-gray-900">Gebruikersbeheer</h3>
@@ -787,7 +791,7 @@ export default function AdminPage() {
               </tbody>
             </table>
           </div>
-        ) : null}
+        )}
       </main>
 
       {/* Receipt Preview Modal */}
