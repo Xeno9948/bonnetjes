@@ -282,7 +282,7 @@ export function GoogleDriveImport({ onClose, onComplete }: GoogleDriveImportProp
                 <AlertCircle className="h-12 w-12 text-red-500" />
                 <p className="mt-2 text-center text-gray-700">{error}</p>
                 <button
-                  onClick={() => fetchFiles(currentFolderId)}
+                  onClick={() => fetchFiles(currentFolderId, sharedWithMe)}
                   className="mt-4 flex items-center gap-2 rounded-lg bg-kv-green px-4 py-2 text-white hover:bg-kv-green/90"
                 >
                   <RefreshCw className="h-4 w-4" />
