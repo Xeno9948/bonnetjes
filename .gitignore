@@ -32,4 +32,5 @@ Thumbs.db
 Downloads/
 Uploads/
 **/client_secret_*.json
+tsconfig.tsbuildinfo
 **/credentials*.json
