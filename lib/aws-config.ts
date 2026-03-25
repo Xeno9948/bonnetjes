@@ -8,5 +8,9 @@ export function getBucketConfig() {
 }
 
 export function createS3Client() {
-  return new S3Client({});
+  const endpoint = process.env.AWS_ENDPOINT;
+  return new S3Client({
+    ...(endpoint && { endpoint, forcePathStyle: true }),
+    region: process.env.AWS_REGION || "auto"
+  });
 }

@@ -95,6 +95,11 @@ export async function getFileUrl(
   isPublic: boolean = false
 ): Promise<string> {
   if (isPublic) {
+    const endpoint = process.env.AWS_ENDPOINT;
+    if (endpoint) {
+      // Handle S3-compatible providers (like Cloudflare R2)
+      return `${endpoint.replace(/\/$/, "")}/${bucketName}/${cloud_storage_path}`;
+    }
     const region = process.env.AWS_REGION || "us-east-1";
     return `https://${bucketName}.s3.${region}.amazonaws.com/${cloud_storage_path}`;
   }
