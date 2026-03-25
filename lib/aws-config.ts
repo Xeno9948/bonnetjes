@@ -9,8 +9,17 @@ export function getBucketConfig() {
 
 export function createS3Client() {
   const endpoint = process.env.AWS_ENDPOINT;
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+
   return new S3Client({
+    region: process.env.AWS_REGION || "auto",
     ...(endpoint && { endpoint, forcePathStyle: true }),
-    region: process.env.AWS_REGION || "auto"
+    ...(accessKeyId && secretAccessKey && {
+      credentials: {
+        accessKeyId,
+        secretAccessKey
+      }
+    })
   });
 }

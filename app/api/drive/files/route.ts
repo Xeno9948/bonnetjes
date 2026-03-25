@@ -74,20 +74,31 @@ export async function GET(request: NextRequest) {
     // Get folder ID from query params, default to "root" for My Drive
     const { searchParams } = new URL(request.url);
     const folderId = searchParams.get("folderId") || "root";
+    const sharedWithMe = searchParams.get("sharedWithMe") === "true";
 
-    // List folders and files in the specified folder
-    // First get folders, then get images/PDFs
-    const folderQuery = `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    const fileQuery = `'${folderId}' in parents and (mimeType contains 'image/' or mimeType = 'application/pdf') and trashed = false`;
+    // Shared drive query support params
+    const driveParams = "&supportsAllDrives=true&includeItemsFromAllDrives=true";
+
+    let folderQuery: string;
+    let fileQuery: string;
+
+    if (sharedWithMe && folderId === "root") {
+      // Show top-level items shared with me
+      folderQuery = `sharedWithMe = true and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      fileQuery = `sharedWithMe = true and (mimeType contains 'image/' or mimeType = 'application/pdf') and trashed = false`;
+    } else {
+      folderQuery = `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      fileQuery = `'${folderId}' in parents and (mimeType contains 'image/' or mimeType = 'application/pdf') and trashed = false`;
+    }
 
     // Fetch folders
-    const folderUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(folderQuery)}&fields=files(id,name,mimeType)&orderBy=name&pageSize=100`;
+    const folderUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(folderQuery)}&fields=files(id,name,mimeType)&orderBy=name&pageSize=100${driveParams}`;
     const folderResponse = await fetch(folderUrl, {
       headers: { Authorization: `Bearer ${accessToken}` }
     });
 
     // Fetch files
-    const fileUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fileQuery)}&fields=files(id,name,mimeType,thumbnailLink,createdTime,size)&orderBy=createdTime desc&pageSize=50`;
+    const fileUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fileQuery)}&fields=files(id,name,mimeType,thumbnailLink,createdTime,size)&orderBy=createdTime desc&pageSize=50${driveParams}`;
     const fileResponse = await fetch(fileUrl, {
       headers: { Authorization: `Bearer ${accessToken}` }
     });

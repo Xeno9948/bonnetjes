@@ -15,7 +15,8 @@ import {
   RefreshCw,
   ChevronRight,
   Home,
-  Folder
+  Folder,
+  Users
 } from "lucide-react";
 
 interface DriveFile {
@@ -53,13 +54,15 @@ export function GoogleDriveImport({ onClose, onComplete }: GoogleDriveImportProp
   const [importProgress, setImportProgress] = useState<Record<string, "pending" | "importing" | "done" | "error">>({});
   const [currentFolderId, setCurrentFolderId] = useState<string>("root");
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItem[]>([{ id: "root", name: "Mijn Drive" }]);
+  const [sharedWithMe, setSharedWithMe] = useState(false);
 
-  const fetchFiles = useCallback(async (folderId: string) => {
+  const fetchFiles = useCallback(async (folderId: string, shared: boolean) => {
     setLoading(true);
     setError(null);
-    setSelectedFiles(new Set()); // Clear selection when navigating
+    setSelectedFiles(new Set());
     try {
-      const response = await fetch(`/api/drive/files?folderId=${encodeURIComponent(folderId)}`);
+      const url = `/api/drive/files?folderId=${encodeURIComponent(folderId)}&sharedWithMe=${shared}`;
+      const response = await fetch(url);
       const data = await response.json();
 
       if (!response.ok) {
@@ -77,8 +80,14 @@ export function GoogleDriveImport({ onClose, onComplete }: GoogleDriveImportProp
   }, []);
 
   useEffect(() => {
-    fetchFiles(currentFolderId);
-  }, [currentFolderId, fetchFiles]);
+    fetchFiles(currentFolderId, sharedWithMe);
+  }, [currentFolderId, sharedWithMe, fetchFiles]);
+
+  const switchMode = (shared: boolean) => {
+    setSharedWithMe(shared);
+    setCurrentFolderId("root");
+    setBreadcrumbs([{ id: "root", name: shared ? "Gedeeld met mij" : "Mijn Drive" }]);
+  };
 
   const navigateToFolder = (folder: DriveFolder) => {
     setCurrentFolderId(folder.id);
@@ -214,6 +223,32 @@ export function GoogleDriveImport({ onClose, onComplete }: GoogleDriveImportProp
               className="rounded-lg p-1 hover:bg-white/20"
             >
               <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* Drive Mode Tabs */}
+          <div className="flex border-b">
+            <button
+              onClick={() => switchMode(false)}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                !sharedWithMe
+                  ? "border-kv-green text-kv-green"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              <Home className="h-4 w-4" />
+              Mijn Drive
+            </button>
+            <button
+              onClick={() => switchMode(true)}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                sharedWithMe
+                  ? "border-kv-green text-kv-green"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              <Users className="h-4 w-4" />
+              Gedeeld met mij
             </button>
           </div>
 
