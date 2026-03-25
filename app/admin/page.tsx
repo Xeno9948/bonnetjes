@@ -120,6 +120,7 @@ export default function AdminPage() {
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
   const [updatingUser, setUpdatingUser] = useState<string | null>(null);
+  const [reviewNotifications, setReviewNotifications] = useState({ count: 0 });
 
   const isAdmin = (session?.user as any)?.role === "admin";
 
@@ -152,6 +153,13 @@ export default function AdminPage() {
       if (usersRes.ok) {
         const usersData = await usersRes.json();
         setUsers(usersData);
+      }
+
+      // Fetch review notifications
+      const notifyRes = await fetch("/api/admin/reviews/notifications");
+      if (notifyRes.ok) {
+        const notifyData = await notifyRes.json();
+        setReviewNotifications(notifyData);
       }
     } catch (error) {
       console.error("Failed to fetch admin data:", error);
@@ -440,6 +448,18 @@ export default function AdminPage() {
           >
             <Receipt className="h-4 w-4" />
             Review Queue
+            {reviewNotifications.count > 0 && (
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                {reviewNotifications.count}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => router.push("/admin/reviews")}
+            className="flex items-center gap-2 rounded-lg px-4 py-2 font-medium bg-kv-green/10 text-kv-green hover:bg-kv-green/20 transition-colors"
+          >
+            <Shield className="h-4 w-4" />
+            Review Platforms (Full)
           </button>
           <button
             onClick={() => setActiveTab("users")}

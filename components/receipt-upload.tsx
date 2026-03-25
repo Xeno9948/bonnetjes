@@ -144,7 +144,21 @@ export function ReceiptUpload({ onClose, onComplete }: ReceiptUploadProps) {
       });
 
       if (!uploadResponse.ok) {
-        throw new Error("Failed to upload file");
+        const errorText = await uploadResponse.text();
+        console.error("S3 Upload Error Body:", errorText);
+        
+        // Try to extract a clean error message from XML if possible
+        let cleanError = "Failed to upload file";
+        if (errorText.includes("<Message>")) {
+          const match = errorText.match(/<Message>(.*?)<\/Message>/);
+          if (match) cleanError = match[1];
+        } else if (uploadResponse.status === 403) {
+          cleanError = "Access denied (403). Check R2 permissions.";
+        } else if (uploadResponse.status === 400) {
+          cleanError = "Invalid request (400). Check metadata/headers.";
+        }
+        
+        throw new Error(cleanError);
       }
 
       // Create receipt record (no expected fields needed)
@@ -237,9 +251,13 @@ export function ReceiptUpload({ onClose, onComplete }: ReceiptUploadProps) {
 
     setProcessing(false);
 
+    const succeeded = files.filter(f => f.status === "completed").length;
+    const failed = files.filter(f => f.status === "error").length;
+
     toast({
       title: "Processing Complete",
-      description: `${files.length} receipt(s) have been processed`
+      description: `${succeeded} success, ${failed} failed`,
+      variant: failed > 0 ? "destructive" : "default"
     });
 
     setTimeout(() => {
@@ -377,9 +395,10 @@ export function ReceiptUpload({ onClose, onComplete }: ReceiptUploadProps) {
                         <p className="font-medium text-gray-900 truncate">{f.file.name}</p>
                         <p className="text-sm text-gray-500">
                           {(f.file.size / 1024 / 1024).toFixed(2)} MB
+                          {f.status === "error" && <span className="ml-2 text-red-500">• {f.error}</span>}
                         </p>
                       </div>
-                      {f.status === "pending" && (
+                      {(f.status === "pending" || f.status === "error") && (
                         <button
                           onClick={() => removeFile(f.id)}
                           className="p-2 text-gray-400 hover:text-red-500"

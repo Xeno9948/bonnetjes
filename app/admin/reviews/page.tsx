@@ -314,6 +314,8 @@ export default function ReviewsPage() {
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loadingReviews, setLoadingReviews] = useState(false);
+  const [reviewLimit, setReviewLimit] = useState(10);
+  const [totalLocationReviews, setTotalLocationReviews] = useState(0);
 
   const isAdmin = (session?.user as any)?.role === "admin";
 
@@ -331,22 +333,23 @@ export default function ReviewsPage() {
     }
   }, []);
 
-  const fetchReviews = useCallback(async (location: Location) => {
+  const fetchReviews = useCallback(async (location: Location, limitRequested?: number) => {
     setLoadingReviews(true);
-    setReviews([]);
+    const useLimit = limitRequested ?? reviewLimit;
     try {
       const res = await fetch(
-        `/api/reviews/location/${location.locationId}?source=${location.source}`
+        `/api/reviews/location/${location.locationId}?source=${location.source}&limit=${useLimit}`
       );
       const data = await res.json();
       const list: Review[] = data.reviews ?? data.feedbacks ?? data.content ?? [];
       setReviews(list);
+      setTotalLocationReviews(data.total ?? list.length);
     } catch {
       setReviews([]);
     } finally {
       setLoadingReviews(false);
     }
-  }, []);
+  }, [reviewLimit]);
 
   const moderateReview = useCallback(async (
     reviewId: string,
@@ -382,7 +385,15 @@ export default function ReviewsPage() {
 
   const handleSelectLocation = (loc: Location) => {
     setSelectedLocation(loc);
-    fetchReviews(loc);
+    setReviewLimit(10);
+    fetchReviews(loc, 10);
+  };
+
+  const handleLoadMore = () => {
+    if (!selectedLocation) return;
+    const newLimit = reviewLimit + 20;
+    setReviewLimit(newLimit);
+    fetchReviews(selectedLocation, newLimit);
   };
 
   if (status === "loading" || (status === "authenticated" && loading)) {
@@ -584,19 +595,35 @@ export default function ReviewsPage() {
                     </a>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    <p className="text-xs text-gray-500">{reviews.length} reviews geladen</p>
-                    {reviews.map((review, i) => (
-                      <ReviewCard
-                        key={review.id ?? review.reviewId ?? i}
-                        review={review}
-                        location={selectedLocation}
-                        onModerate={(reviewId, action) =>
-                          moderateReview(reviewId, action, selectedLocation)
-                        }
-                      />
-                    ))}
-                  </div>
+                    <div className="space-y-3">
+                      <p className="text-xs text-gray-500">
+                        {reviews.length} van {totalLocationReviews} reviews geladen
+                      </p>
+                      {reviews.map((review, i) => (
+                        <ReviewCard
+                          key={review.id ?? review.reviewId ?? i}
+                          review={review}
+                          location={selectedLocation}
+                          onModerate={(reviewId, action) =>
+                            moderateReview(reviewId, action, selectedLocation)
+                          }
+                        />
+                      ))}
+
+                      {reviews.length < totalLocationReviews && (
+                        <button
+                          onClick={handleLoadMore}
+                          disabled={loadingReviews}
+                          className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          {loadingReviews ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            "Meer laden"
+                          )}
+                        </button>
+                      )}
+                    </div>
                 )}
               </div>
 
