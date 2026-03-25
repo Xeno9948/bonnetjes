@@ -8,8 +8,9 @@ const KIYOH_BASE = "https://www.kiyoh.com/v1/publication";
 const KV_BASE = "https://www.klantenvertellen.nl/v1/publication";
 
 async function fetchLocations(baseUrl: string, token: string, source: string) {
-  const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-  const url = `${baseUrl}/review/locations/latest?updatedSince=${since}`;
+  // All three params are mandatory per API docs
+  const since = "2020-01-01T00:00:00.000+00:00";
+  const url = `${baseUrl}/review/locations/latest?updatedSince=${encodeURIComponent(since)}&dateSince=${encodeURIComponent(since)}&limit=100`;
   const res = await fetch(url, {
     headers: { "X-Publication-Api-Token": token },
     next: { revalidate: 60 }

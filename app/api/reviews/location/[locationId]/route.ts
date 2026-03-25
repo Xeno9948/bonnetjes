@@ -37,8 +37,8 @@ export async function GET(
   }
 
   try {
-    // Correct endpoint from API docs: /v1/publication/review/external/all
-    const url = new URL(`${baseUrl}/review/external/all`);
+    // Correct endpoint from API docs: /v1/publication/review/external (NOT /all)
+    const url = new URL(`${baseUrl}/review/external`);
     url.searchParams.set("locationId", params.locationId);
     url.searchParams.set("tenantId", tenantId);
     url.searchParams.set("orderBy", orderBy);
@@ -56,9 +56,12 @@ export async function GET(
     }
 
     const data = await res.json();
-    // Normalise: API returns { reviews: [...] } or array directly
-    const reviews = Array.isArray(data) ? data : (data.reviews ?? data.content ?? data.feedbacks ?? []);
-    return NextResponse.json({ reviews, total: reviews.length });
+    // API returns location object with .reviews array containing individual reviews
+    // Each review has: reviewId, reviewAuthor, rating, reviewContent (array of content lines)
+    const reviews = Array.isArray(data)
+      ? data
+      : (data.reviews ?? data.content ?? data.feedbacks ?? []);
+    return NextResponse.json({ reviews, total: data.numberReviews ?? reviews.length });
   } catch (error) {
     console.error("Reviews fetch error:", error);
     return NextResponse.json({ error: "Failed to fetch reviews", reviews: [], total: 0 });

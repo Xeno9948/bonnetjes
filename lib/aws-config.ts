@@ -14,7 +14,13 @@ export function createS3Client() {
 
   return new S3Client({
     region: process.env.AWS_REGION || "auto",
-    ...(endpoint && { endpoint, forcePathStyle: true }),
+    ...(endpoint && { endpoint }),
+    // Cloudflare R2 does NOT support forcePathStyle for presigned URL generation
+    // forcePathStyle causes the bucket name to be in the path, breaking R2 presigned URLs
+    // R2 expects: <account-id>.r2.cloudflarestorage.com/<bucket>/<key>
+    // AWS SDK v3 adds x-amz-checksum-sha256 by default — R2 rejects this with InvalidArgument
+    requestChecksumCalculation: "WHEN_REQUIRED" as any,
+    responseChecksumValidation: "WHEN_REQUIRED" as any,
     ...(accessKeyId && secretAccessKey && {
       credentials: {
         accessKeyId,

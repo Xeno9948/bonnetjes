@@ -53,12 +53,17 @@ interface Review {
   totalScore?: number;
   content?: string;
   comment?: string;
+  // Actual Kiyoh/KV API fields:
+  reviewAuthor?: string;
+  reviewContent?: Array<{ questionGroup: string; rating?: number; review?: string }>;
+  city?: string;
   recommendation?: boolean;
   isRecommended?: boolean;
   reviewerName?: string;
   name?: string;
   createdAt?: string;
   publishDate?: string;
+  dateSince?: string;
   status?: string;
   locationId?: string;
 }
@@ -113,9 +118,12 @@ function ReviewCard({
   onModerate: (reviewId: string, action: "abuse" | "changerequest") => void;
 }) {
   const rating = review.rating ?? review.totalScore ?? 0;
-  const content = review.content ?? review.comment ?? "";
-  const name = review.reviewerName ?? review.name ?? "Anoniem";
-  const date = review.createdAt ?? review.publishDate;
+  // Kiyoh API: reviewContent is array of content lines; find the opinion text
+  const content = review.content ?? review.comment ??
+    review.reviewContent?.find(c => c.questionGroup === "DEFAULT_OPINION")?.review ??
+    review.reviewContent?.find(c => c.review)?.review ?? "";
+  const name = review.reviewAuthor ?? review.reviewerName ?? review.name ?? "Anoniem";
+  const date = review.createdAt ?? review.publishDate ?? review.dateSince;
   const recommended = review.recommendation ?? review.isRecommended;
   const status = review.status;
   const reviewId = review.id ?? review.reviewId ?? "";
