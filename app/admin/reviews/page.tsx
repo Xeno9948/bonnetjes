@@ -6,24 +6,19 @@ import { useEffect, useState, useCallback } from "react";
 import { Header } from "@/components/header";
 import {
   Star,
-  StarHalf,
   Loader2,
   RefreshCw,
   ExternalLink,
-  ChevronDown,
-  ChevronUp,
   X,
   ThumbsUp,
   ThumbsDown,
-  LayoutGrid,
-  List,
   AlertCircle,
-  CheckCircle,
-  Clock,
   Globe,
   MapPin,
-  TrendingUp,
-  Users
+  Users,
+  Flag,
+  MessageSquare,
+  Clock
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -32,6 +27,8 @@ interface Location {
   locationName: string;
   averageRating: number;
   numberReviews: number;
+  numberReviewsPending?: number;
+  numberReviewsRejected?: number;
   percentageRecommendation: number;
   fiveStars: number;
   fourStars: number;
@@ -63,6 +60,7 @@ interface Review {
   createdAt?: string;
   publishDate?: string;
   status?: string;
+  locationId?: string;
 }
 
 type Tab = "all" | "kiyoh" | "kv";
@@ -105,13 +103,29 @@ function SourceBadge({ source }: { source: "kiyoh" | "kv" }) {
   );
 }
 
-function ReviewCard({ review }: { review: Review }) {
+function ReviewCard({
+  review,
+  location,
+  onModerate
+}: {
+  review: Review;
+  location: Location;
+  onModerate: (reviewId: string, action: "abuse" | "changerequest") => void;
+}) {
   const rating = review.rating ?? review.totalScore ?? 0;
   const content = review.content ?? review.comment ?? "";
   const name = review.reviewerName ?? review.name ?? "Anoniem";
   const date = review.createdAt ?? review.publishDate;
   const recommended = review.recommendation ?? review.isRecommended;
   const status = review.status;
+  const reviewId = review.id ?? review.reviewId ?? "";
+  const [moderating, setModerating] = useState<string | null>(null);
+
+  const handleModerate = async (action: "abuse" | "changerequest") => {
+    setModerating(action);
+    await onModerate(reviewId, action);
+    setModerating(null);
+  };
 
   return (
     <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
@@ -155,6 +169,29 @@ function ReviewCard({ review }: { review: Review }) {
       </div>
       {content && (
         <p className="mt-3 text-sm leading-relaxed text-gray-700">{content}</p>
+      )}
+      {/* Moderation buttons */}
+      {reviewId && (
+        <div className="mt-3 flex items-center gap-2 border-t pt-3">
+          <button
+            onClick={() => handleModerate("changerequest")}
+            disabled={!!moderating}
+            className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            title="Verzoek reviewer om beoordeling aan te passen"
+          >
+            {moderating === "changerequest" ? <Loader2 className="h-3 w-3 animate-spin" /> : <MessageSquare className="h-3 w-3" />}
+            Wijzigingsverzoek
+          </button>
+          <button
+            onClick={() => handleModerate("abuse")}
+            disabled={!!moderating}
+            className="flex items-center gap-1 rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+            title="Rapporteer als nep/misbruik"
+          >
+            {moderating === "abuse" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Flag className="h-3 w-3" />}
+            Rapporteer
+          </button>
+        </div>
       )}
     </div>
   );
@@ -209,8 +246,16 @@ function LocationCard({ location, onSelect }: { location: Location; onSelect: ()
           <p className="text-sm font-bold text-green-600">{location.percentageRecommendation}%</p>
         </div>
         <div className="text-center">
-          <p className="text-xs text-gray-500">Categorie</p>
-          <p className="truncate text-xs font-medium text-gray-600">{location.categoryName?.replace(/_/g, " ")}</p>
+          <p className="text-xs text-gray-500">
+            {(location.numberReviewsPending ?? 0) > 0 ? "In behandeling" : "Categorie"}
+          </p>
+          {(location.numberReviewsPending ?? 0) > 0 ? (
+            <p className="text-sm font-bold text-yellow-600 flex items-center justify-center gap-1">
+              <Clock className="h-3 w-3" />{location.numberReviewsPending}
+            </p>
+          ) : (
+            <p className="truncate text-xs font-medium text-gray-600">{location.categoryName?.replace(/_/g, " ")}</p>
+          )}
         </div>
       </div>
 
@@ -292,6 +337,30 @@ export default function ReviewsPage() {
       setReviews([]);
     } finally {
       setLoadingReviews(false);
+    }
+  }, []);
+
+  const moderateReview = useCallback(async (
+    reviewId: string,
+    action: "abuse" | "changerequest",
+    location: Location
+  ) => {
+    try {
+      const res = await fetch("/api/reviews/moderate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: location.source,
+          action,
+          locationId: location.locationId,
+          reviewId
+        })
+      });
+      if (!res.ok) throw new Error();
+      // Optimistically remove the review from the list after moderation
+      setReviews(prev => prev.filter(r => (r.id ?? r.reviewId) !== reviewId));
+    } catch {
+      // silent fail — user can retry
     }
   }, []);
 
@@ -510,7 +579,14 @@ export default function ReviewsPage() {
                   <div className="space-y-3">
                     <p className="text-xs text-gray-500">{reviews.length} reviews geladen</p>
                     {reviews.map((review, i) => (
-                      <ReviewCard key={review.id ?? review.reviewId ?? i} review={review} />
+                      <ReviewCard
+                        key={review.id ?? review.reviewId ?? i}
+                        review={review}
+                        location={selectedLocation}
+                        onModerate={(reviewId, action) =>
+                          moderateReview(reviewId, action, selectedLocation)
+                        }
+                      />
                     ))}
                   </div>
                 )}
