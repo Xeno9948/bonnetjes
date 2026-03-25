@@ -2,7 +2,7 @@
 
 import { useSession, signOut } from "next-auth/react";
 import Link from "next/link";
-import { LogOut, Shield, LayoutDashboard, Menu, X } from "lucide-react";
+import { LogOut, Shield, LayoutDashboard, Menu, X, Star } from "lucide-react";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -41,13 +41,22 @@ export function Header() {
                 Dashboard
               </Link>
               {isAdmin && (
-                <Link
-                  href="/admin"
-                  className="flex items-center gap-2 rounded-lg bg-kv-green/10 px-4 py-2 text-sm font-medium text-kv-green transition-colors hover:bg-kv-green/20"
-                >
-                  <Shield className="h-4 w-4" />
-                  Admin Panel
-                </Link>
+                <>
+                  <Link
+                    href="/admin"
+                    className="flex items-center gap-2 rounded-lg bg-kv-green/10 px-4 py-2 text-sm font-medium text-kv-green transition-colors hover:bg-kv-green/20"
+                  >
+                    <Shield className="h-4 w-4" />
+                    Admin Panel
+                  </Link>
+                  <Link
+                    href="/admin/reviews"
+                    className="flex items-center gap-2 rounded-lg bg-yellow-50 px-4 py-2 text-sm font-medium text-yellow-700 transition-colors hover:bg-yellow-100"
+                  >
+                    <Star className="h-4 w-4" />
+                    Reviews
+                  </Link>
+                </>
               )}
               <button
                 onClick={() => signOut({ callbackUrl: "/login" })}
@@ -109,14 +118,24 @@ export function Header() {
                     Dashboard
                   </Link>
                   {isAdmin && (
-                    <Link
-                      href="/admin"
-                      className="flex items-center gap-2 rounded-lg bg-kv-green/10 px-4 py-3 text-sm font-medium text-kv-green"
-                      onClick={() => setMobileMenuOpen(false)}
-                    >
-                      <Shield className="h-4 w-4" />
-                      Admin Panel
-                    </Link>
+                    <>
+                      <Link
+                        href="/admin"
+                        className="flex items-center gap-2 rounded-lg bg-kv-green/10 px-4 py-3 text-sm font-medium text-kv-green"
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        <Shield className="h-4 w-4" />
+                        Admin Panel
+                      </Link>
+                      <Link
+                        href="/admin/reviews"
+                        className="flex items-center gap-2 rounded-lg bg-yellow-50 px-4 py-3 text-sm font-medium text-yellow-700"
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        <Star className="h-4 w-4" />
+                        Reviews
+                      </Link>
+                    </>
                   )}
                   <button
                     onClick={() => {
