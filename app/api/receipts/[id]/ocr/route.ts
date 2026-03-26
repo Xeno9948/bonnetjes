@@ -65,39 +65,79 @@ Respond with JSON in this exact format:
 Respond with raw JSON only.`;
 
     // Prepare messages for LLM
-    const messages = isPdf
-      ? [
+    let messages: any[];
+
+    if (isPdf) {
+      // Upload the PDF to OpenAI Files API so the model can read it natively
+      const aiBaseUrlForUpload = process.env.AI_API_BASE_URL || "https://api.openai.com/v1";
+      const fileBlob = new Blob([fileBuffer], { type: "application/pdf" });
+      const formData = new FormData();
+      formData.append("file", fileBlob, receipt.originalFilename || "receipt.pdf");
+      formData.append("purpose", "assistants");
+
+      let fileId: string | null = null;
+      try {
+        const uploadRes = await fetch(`${aiBaseUrlForUpload}/files`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.AI_API_KEY}` },
+          body: formData
+        });
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          fileId = uploadData.id;
+        } else {
+          console.warn("OpenAI file upload failed:", await uploadRes.text());
+        }
+      } catch (e) {
+        console.warn("File upload error:", e);
+      }
+
+      if (fileId) {
+        // Use the uploaded file reference — supported by GPT-4o
+        messages = [
           {
             role: "user" as const,
             content: [
+              { type: "text" as const, text: ocrPrompt },
               {
-                type: "text" as const,
-                text: ocrPrompt
-              },
-              {
-                type: "text" as const,
-                text: `[PDF Content attached as base64 - Note: Standard OpenAI/Gemini models may require PDF-to-image conversion or specific PDF support like Gemini 1.5]`
-              }
-              // For a fully standalone app, consider using a library like pdf-img-convert
-              // to convert PDF pages to images if the selected AI model doesn't support PDFs directly.
-            ]
-          }
-        ]
-      : [
-          {
-            role: "user" as const,
-            content: [
-              {
-                type: "text" as const,
-                text: ocrPrompt
-              },
-              {
-                type: "image_url" as const,
-                image_url: { url: dataUri }
+                type: "file" as const,
+                file: { file_id: fileId }
               }
             ]
           }
         ];
+      } else {
+        // Fallback: send as image_url with data URI (may not work for all PDFs)
+        messages = [
+          {
+            role: "user" as const,
+            content: [
+              {
+                type: "text" as const,
+                text: ocrPrompt + "\n\nNote: This is a PDF document provided as base64. Extract what information you can from the text content."
+              },
+              { type: "image_url" as const, image_url: { url: dataUri } }
+            ]
+          }
+        ];
+      }
+    } else {
+      messages = [
+        {
+          role: "user" as const,
+          content: [
+            {
+              type: "text" as const,
+              text: ocrPrompt
+            },
+            {
+              type: "image_url" as const,
+              image_url: { url: dataUri }
+            }
+          ]
+        }
+      ];
+    }
 
     // Call LLM API with streaming
     const aiBaseUrl = process.env.AI_API_BASE_URL || "https://api.openai.com/v1";
