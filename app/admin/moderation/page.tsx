@@ -76,6 +76,7 @@ export default function ModerationQueuePage() {
   const [moderatingId, setModeratingId] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [showDebug, setShowDebug] = useState<Record<string, boolean>>({});
+  const [lastUpdated, setLastUpdated] = useState<string>("Nu");
 
   const isAdmin = (session?.user as any)?.role === "admin";
 
@@ -89,6 +90,9 @@ export default function ModerationQueuePage() {
         setTotal(data.total ?? 0);
         setLocationCount(data.locationCount ?? 0);
         setLocationsChecked(data.locationsChecked ?? 0);
+        if (data.timestamp) {
+          setLastUpdated(new Date(data.timestamp).toLocaleTimeString());
+        }
       } else {
         toast({ title: "Fout", description: "Kon moderatiewachtrij niet laden", variant: "destructive" });
       }
@@ -294,7 +298,7 @@ export default function ModerationQueuePage() {
             ))}
           </div>
           <div className="text-xs text-gray-400 font-medium">
-             Wachtrij laatst ververst: {globalModerationCache ? new Date(globalModerationCache.timestamp).toLocaleTimeString() : 'Nu'}
+             Wachtrij laatst ververst: {lastUpdated}
           </div>
         </div>
 
