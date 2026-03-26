@@ -448,9 +448,9 @@ export default function AdminPage() {
           >
             <Receipt className="h-4 w-4" />
             Review Queue
-            {reviewNotifications.count > 0 && (
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
-                {reviewNotifications.count}
+            {(stats?.pendingCount ?? 0) > 0 && (
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-kv-orange text-[10px] font-bold text-white">
+                {stats?.pendingCount}
               </span>
             )}
           </button>
@@ -460,6 +460,11 @@ export default function AdminPage() {
           >
             <Shield className="h-4 w-4" />
             Review Platforms (Full)
+            {reviewNotifications.count > 0 && (
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                {reviewNotifications.count}
+              </span>
+            )}
           </button>
           <button
             onClick={() => setActiveTab("users")}
