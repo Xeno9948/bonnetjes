@@ -22,31 +22,61 @@ let globalModerationCache: {
 
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-// Fetch all locations - returns them with numberReviewsPending so we can filter
+// Fetch all locations - uses pagination since the API caps single requests at 250
 async function fetchAllLocations(baseUrl: string, token: string, source: string) {
   const since = "2019-01-01T00:00:00.000+00:00";
-  // limit=10000 ensures we get ALL locations (user reported 250+)
-  const url = `${baseUrl}/review/locations/latest?updatedSince=${encodeURIComponent(since)}&dateSince=${encodeURIComponent(since)}&limit=10000`;
-  
+  const limit = 250; // Use the known API cap
+  let offset = 0;
+  let allProcessed: any[] = [];
+  let hasMore = true;
+
   try {
-    const res = await fetch(url, {
-      headers: { "X-Publication-Api-Token": token },
-      next: { revalidate: 1800 } // Cache 30 min at Next.js level
-    });
-    if (!res.ok) {
-      console.error(`Locations API error ${res.status} for ${source}`);
-      return [];
+    while (hasMore) {
+      const url = `${baseUrl}/review/locations/latest?updatedSince=${encodeURIComponent(since)}&dateSince=${encodeURIComponent(since)}&limit=${limit}&offset=${offset}`;
+      console.log(`Fetching locations for ${source} (offset ${offset})...`);
+      
+      const res = await fetch(url, {
+        headers: { "X-Publication-Api-Token": token },
+        cache: "no-store" 
+      });
+
+      if (!res.ok) {
+        console.error(`Locations API error ${res.status} for ${source} at offset ${offset}`);
+        break;
+      }
+
+      const data = await res.json();
+      const locationsPage = Array.isArray(data) ? data : [];
+      
+      if (locationsPage.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      const mapped = locationsPage.map((loc: any) => ({
+        locationId: loc.locationId ?? loc.id,
+        locationName: loc.locationName ?? loc.name,
+        numberReviewsPending: loc.numberReviewsPending ?? 0,
+        source
+      }));
+
+      allProcessed.push(...mapped);
+      
+      // If we got fewer than the limit, we're likely done
+      if (locationsPage.length < limit) {
+        hasMore = false;
+      } else {
+        offset += limit;
+        // Small delay to avoid triggering Cloudflare during pagination
+        await sleep(100);
+      }
     }
-    const data = await res.json();
-    return (Array.isArray(data) ? data : []).map((loc: any) => ({
-      locationId: loc.locationId ?? loc.id,
-      locationName: loc.locationName ?? loc.name,
-      numberReviewsPending: loc.numberReviewsPending ?? 0,
-      source
-    }));
+    
+    console.log(`Total ${allProcessed.length} locations fetched for ${source}`);
+    return allProcessed;
   } catch (err) {
     console.error(`Failed to fetch locations for ${source}:`, err);
-    return [];
+    return allProcessed;
   }
 }
 
