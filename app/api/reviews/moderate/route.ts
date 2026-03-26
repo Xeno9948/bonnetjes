@@ -59,6 +59,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   }
 
+  console.log(`Moderation action: ${action} for ${source} review ${reviewId} at location ${locationId}`);
+  console.log(`Payload:`, JSON.stringify(payload));
+
   try {
     const res = await fetch(endpoint, {
       method,
@@ -69,10 +72,19 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify(payload)
     });
 
+    const resText = await res.text();
+    console.log(`API Response (${res.status}):`, resText);
+
     if (!res.ok) {
-      const errText = await res.text();
-      console.error(`Moderation API error ${res.status}:`, errText);
-      return NextResponse.json({ error: `API error: ${res.status}`, detail: errText }, { status: res.status });
+      console.error(`Moderation API error ${res.status}:`, resText);
+      let errorMessage = `API error: ${res.status}`;
+      try {
+        const errJson = JSON.parse(resText);
+        errorMessage = errJson.message || errJson.error || errJson.detailedError?.[0]?.message || errorMessage;
+      } catch {
+        // Fallback to raw text or status
+      }
+      return NextResponse.json({ error: errorMessage, detail: resText }, { status: res.status });
     }
 
     return NextResponse.json({ success: true, action });

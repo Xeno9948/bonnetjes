@@ -13,22 +13,41 @@ function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Global in-memory cache to prevent 429 rate limiting on refresh
+// Caches the aggregated reviews for 5 minutes
+let globalModerationCache: {
+  data: any;
+  timestamp: number;
+} | null = null;
+
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 // Fetch all locations - returns them with numberReviewsPending so we can filter
 async function fetchAllLocations(baseUrl: string, token: string, source: string) {
   const since = "2019-01-01T00:00:00.000+00:00";
+  // limit=10000 ensures we get ALL locations (user reported 250+)
   const url = `${baseUrl}/review/locations/latest?updatedSince=${encodeURIComponent(since)}&dateSince=${encodeURIComponent(since)}&limit=10000`;
-  const res = await fetch(url, {
-    headers: { "X-Publication-Api-Token": token },
-    next: { revalidate: 1800 } // Cache 30 min
-  });
-  if (!res.ok) return [];
-  const data = await res.json();
-  return (Array.isArray(data) ? data : []).map((loc: any) => ({
-    locationId: loc.locationId ?? loc.id,
-    locationName: loc.locationName ?? loc.name,
-    numberReviewsPending: loc.numberReviewsPending ?? 0,
-    source
-  }));
+  
+  try {
+    const res = await fetch(url, {
+      headers: { "X-Publication-Api-Token": token },
+      next: { revalidate: 1800 } // Cache 30 min at Next.js level
+    });
+    if (!res.ok) {
+      console.error(`Locations API error ${res.status} for ${source}`);
+      return [];
+    }
+    const data = await res.json();
+    return (Array.isArray(data) ? data : []).map((loc: any) => ({
+      locationId: loc.locationId ?? loc.id,
+      locationName: loc.locationName ?? loc.name,
+      numberReviewsPending: loc.numberReviewsPending ?? 0,
+      source
+    }));
+  } catch (err) {
+    console.error(`Failed to fetch locations for ${source}:`, err);
+    return [];
+  }
 }
 
 // Fetch reviews for a single location - look for non-published ones
@@ -40,15 +59,18 @@ async function fetchPendingReviewsForLocation(
   source: string,
   locationName: string
 ) {
-  const url = `${baseUrl}/review/external?locationId=${locationId}&tenantId=${tenantId}&orderBy=CREATE_DATE&sortOrder=DESC&limit=50`;
+  // Use SortOrder=DESC and a large limit to catch all recent ones
+  const url = `${baseUrl}/review/external?locationId=${locationId}&tenantId=${tenantId}&orderBy=CREATE_DATE&sortOrder=DESC&limit=100`;
+  
   try {
     const res = await fetch(url, {
       headers: { "X-Publication-Api-Token": token },
       cache: "no-store"
     });
+    
     if (!res.ok) {
       if (res.status === 429) {
-        // Rate limited - wait and retry once
+        console.warn(`Rate limited (429) for location ${locationId}. Retrying after sleep...`);
         await sleep(2000);
         const retry = await fetch(url, {
           headers: { "X-Publication-Api-Token": token },
@@ -56,22 +78,37 @@ async function fetchPendingReviewsForLocation(
         });
         if (!retry.ok) return [];
         const d = await retry.json();
-        const reviews = Array.isArray(d) ? d : (d.reviews ?? d.content ?? []);
-        return reviews
-          .filter((r: any) => r.status && r.status !== "PUBLISHED" && r.status !== "VERIFIED")
-          .map((r: any) => ({ ...r, locationId, locationName, source }));
+        return extractPending(d, locationId, locationName, source);
       }
       return [];
     }
+    
     const data = await res.json();
-    const reviews = Array.isArray(data) ? data : (data.reviews ?? data.content ?? []);
-    // Filter to non-published / pending only
-    return reviews
-      .filter((r: any) => r.status && r.status !== "PUBLISHED" && r.status !== "VERIFIED")
-      .map((r: any) => ({ ...r, locationId, locationName, source }));
-  } catch {
+    return extractPending(data, locationId, locationName, source);
+  } catch (err) {
+    console.error(`Error fetching reviews for location ${locationId}:`, err);
     return [];
   }
+}
+
+function extractPending(data: any, locationId: string, locationName: string, source: string) {
+  const reviews = Array.isArray(data) ? data : (data.reviews ?? data.content ?? data.feedbacks ?? []);
+  
+  return reviews
+    .filter((r: any) => {
+      const status = (r.status || r.statusCode || "").toUpperCase();
+      // If no status, it might be published or pending. But usually published is default.
+      // We want everything NOT published and NOT verified.
+      return status !== "PUBLISHED" && status !== "VERIFIED" && status !== "";
+    })
+    .map((r: any) => ({
+      ...r,
+      locationId,
+      locationName,
+      source,
+      // Ensure we have a consistent ID field for the UI
+      id: r.reviewId ?? r.id ?? r.feedbackId
+    }));
 }
 
 export async function GET() {
@@ -81,25 +118,33 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // Check memory cache first
+    const now = Date.now();
+    if (globalModerationCache && (now - globalModerationCache.timestamp < CACHE_TTL)) {
+      console.log("Serving moderation queue from memory cache");
+      return NextResponse.json(globalModerationCache.data);
+    }
+
     const tokenKIYOH = process.env.KIYOH_API_TOKEN;
     const tokenKV = process.env.KV_API_TOKEN;
 
-    // 1. Load all locations from both platforms in parallel (this is 2 calls, fine)
+    // 1. Load all locations
     const [kiyohLocations, kvLocations] = await Promise.all([
       tokenKIYOH ? fetchAllLocations(KIYOH_BASE, tokenKIYOH, "kiyoh") : [],
       tokenKV ? fetchAllLocations(KV_BASE, tokenKV, "kv") : []
     ]);
 
     const allLocations = [...kiyohLocations, ...kvLocations];
-    const locationCount = allLocations.length;
+    const totalLocations = allLocations.length;
 
-    // 2. Only fetch reviews from locations that actually have pending reviews
-    // This dramatically reduces API calls (from 250 to maybe 5-10)
+    // 2. Identify locations with pending reviews
     const locationsWithPending = allLocations.filter(
       loc => (loc.numberReviewsPending ?? 0) > 0
     );
 
-    // 3. Fetch sequentially with small delay to avoid rate limiting
+    console.log(`Checking ${locationsWithPending.length} locations out of ${totalLocations} for pending reviews...`);
+
+    // 3. Fetch sequentially with a safe delay (500ms)
     const pendingReviews: any[] = [];
     for (const loc of locationsWithPending) {
       const baseUrl = loc.source === "kv" ? KV_BASE : KIYOH_BASE;
@@ -116,18 +161,27 @@ export async function GET() {
       );
       pendingReviews.push(...reviews);
 
-      // Polite delay between calls — 300ms — avoids Cloudflare rate limiting
+      // Avoid Cloudflare 1015 ban via sequential delay
       if (locationsWithPending.indexOf(loc) < locationsWithPending.length - 1) {
-        await sleep(300);
+        await sleep(500); 
       }
     }
 
-    return NextResponse.json({
+    const responseData = {
       reviews: pendingReviews,
       total: pendingReviews.length,
-      locationCount,
-      locationsWithPending: locationsWithPending.length
-    });
+      locationCount: totalLocations,
+      locationsChecked: locationsWithPending.length,
+      timestamp: now
+    };
+
+    // Update global cache
+    globalModerationCache = {
+      data: responseData,
+      timestamp: now
+    };
+
+    return NextResponse.json(responseData);
   } catch (error) {
     console.error("Moderation queue error:", error);
     return NextResponse.json({ error: "Failed to fetch moderation queue" }, { status: 500 });
