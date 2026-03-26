@@ -238,31 +238,48 @@ export function ReceiptUpload({ onClose, onComplete }: ReceiptUploadProps) {
   const handleSubmit = async () => {
     if (files.length === 0) return;
 
+    console.log("Starting upload processing for", files.length, "Files");
     setProcessing(true);
+    
+    let localSucceeded = 0;
+    let localFailed = 0;
 
     // Process all files
     for (let i = 0; i < files.length; i++) {
       const fileUpload = files[i];
       if (fileUpload.status !== "pending") continue;
 
-      const result = await processFile(fileUpload);
-      setFiles((prev) => prev.map((f) => (f.id === result.id ? result : f)));
+      console.log(`Processing file ${i + 1}/${files.length}: ${fileUpload.file.name}`);
+      try {
+        const result = await processFile(fileUpload);
+        setFiles((prev) => prev.map((f) => (f.id === result.id ? result : f)));
+        
+        if (result.status === "completed") {
+          localSucceeded++;
+        } else {
+          localFailed++;
+        }
+      } catch (err) {
+        console.error("Submission loop item error:", err);
+        localFailed++;
+      }
     }
 
     setProcessing(false);
-
-    const succeeded = files.filter(f => f.status === "completed").length;
-    const failed = files.filter(f => f.status === "error").length;
+    console.log(`Processing complete. Succeeded: ${localSucceeded}, Failed: ${localFailed}`);
 
     toast({
       title: "Processing Complete",
-      description: `${succeeded} success, ${failed} failed`,
-      variant: failed > 0 ? "destructive" : "default"
+      description: `${localSucceeded} success, ${localFailed} failed`,
+      variant: localFailed > 0 ? "destructive" : "default"
     });
 
-    setTimeout(() => {
-      onComplete();
-    }, 1500);
+    // Only close and refresh if something actually happened
+    if (localSucceeded > 0 || localFailed > 0) {
+      setTimeout(() => {
+        onComplete();
+      }, 2000);
+    }
   };
 
   const allCompleted = files.length > 0 && files.every((f) => f.status === "completed" || f.status === "error");
