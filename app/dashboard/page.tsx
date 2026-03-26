@@ -458,6 +458,13 @@ export default function DashboardPage() {
               )}
             </button>
             <button
+              onClick={() => router.push("/admin/moderation")}
+              className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium bg-yellow-50 text-yellow-700 hover:bg-yellow-100 transition-colors"
+            >
+              <Shield className="h-4 w-4" />
+              Review Moderatie
+            </button>
+            <button
               onClick={() => router.push("/admin/reviews")}
               className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium bg-kv-green/10 text-kv-green hover:bg-kv-green/20 transition-colors"
             >
