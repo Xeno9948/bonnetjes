@@ -19,9 +19,9 @@ let globalModerationCache: {
   timestamp: number;
 } | null = null;
 
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
-// Fetch all locations with full pagination (handles > 250 locations)
+// Fetch all locations with full pagination and 429 safety
 async function fetchAllLocations(baseUrl: string, token: string, source: string) {
   const since = "2019-01-01T00:00:00.000+00:00";
   const limit = 250;
@@ -31,7 +31,7 @@ async function fetchAllLocations(baseUrl: string, token: string, source: string)
 
   while (hasMore) {
     const url = `${baseUrl}/review/locations/latest?updatedSince=${encodeURIComponent(since)}&dateSince=${encodeURIComponent(since)}&limit=${limit}&offset=${offset}`;
-    console.log(`[${source}] Fetching locations (offset ${offset})...`);
+    console.log(`[${source}] Fetching locations for moderation (offset ${offset})...`);
 
     try {
       const res = await fetch(url, {
@@ -40,6 +40,11 @@ async function fetchAllLocations(baseUrl: string, token: string, source: string)
       });
 
       if (!res.ok) {
+        if (res.status === 429) {
+          console.warn(`[${source}] Locations Rate limited (429). Waiting 5s...`);
+          await sleep(5000);
+          continue; // Retry
+        }
         console.error(`[${source}] Locations API error ${res.status} at offset ${offset}`);
         break;
       }
@@ -66,7 +71,7 @@ async function fetchAllLocations(baseUrl: string, token: string, source: string)
         hasMore = false;
       } else {
         offset += limit;
-        await sleep(200);
+        await sleep(500); // 500ms delay between pages
       }
     } catch (err) {
       console.error(`[${source}] Error fetching locations at offset ${offset}:`, err);
@@ -74,7 +79,7 @@ async function fetchAllLocations(baseUrl: string, token: string, source: string)
     }
   }
 
-  console.log(`[${source}] Total locations fetched: ${allProcessed.length}`);
+  console.log(`[${source}] Total ${allProcessed.length} locations found for moderation scan`);
   return allProcessed;
 }
 
@@ -87,77 +92,55 @@ async function fetchPendingReviewsForLocation(
   source: string,
   locationName: string
 ) {
-  // Try the pending/moderation-specific endpoint first
-  const urls = [
-    // Primary: external endpoint with no status filter — returns reviews needing moderation
-    `${baseUrl}/review/external?locationId=${locationId}&tenantId=${tenantId}&orderBy=CREATE_DATE&sortOrder=DESC&limit=100`,
-  ];
+  const url = `${baseUrl}/review/external?locationId=${locationId}&tenantId=${tenantId}&orderBy=CREATE_DATE&sortOrder=DESC&limit=100`;
 
-  for (const url of urls) {
-    try {
-      const res = await fetch(url, {
+  try {
+    const res = await fetch(url, {
+      headers: { "X-Publication-Api-Token": token },
+      cache: "no-store"
+    });
+
+    if (res.status === 429) {
+      console.warn(`[${source}] Review Rate limited (429) for location ${locationId}. Waiting 3s...`);
+      await sleep(3000);
+      const retry = await fetch(url, {
         headers: { "X-Publication-Api-Token": token },
         cache: "no-store"
       });
-
-      if (res.status === 429) {
-        console.warn(`[${source}] Rate limited (429) for location ${locationId}. Waiting 2s...`);
-        await sleep(2000);
-        const retry = await fetch(url, {
-          headers: { "X-Publication-Api-Token": token },
-          cache: "no-store"
-        });
-        if (!retry.ok) continue;
-        const d = await retry.json();
-        return extractPending(d, locationId, locationName, source);
-      }
-
-      if (!res.ok) {
-        console.warn(`[${source}] API ${res.status} for location ${locationId}`);
-        continue;
-      }
-
-      const data = await res.json();
-      const results = extractPending(data, locationId, locationName, source);
-      if (results.length > 0) return results;
-    } catch (err) {
-      console.error(`[${source}] Error fetching reviews for location ${locationId}:`, err);
+      if (!retry.ok) return [];
+      const d = await retry.json();
+      return extractPending(d, locationId, locationName, source);
     }
-  }
 
-  return [];
+    if (!res.ok) {
+      console.warn(`[${source}] API ${res.status} for location ${locationId}`);
+      return [];
+    }
+
+    const data = await res.json();
+    return extractPending(data, locationId, locationName, source);
+  } catch (err) {
+    console.error(`[${source}] Error fetching reviews for location ${locationId}:`, err);
+    return [];
+  }
 }
 
 function extractReviewId(r: any): string {
-  // Try every known ID field across Kiyoh and KV API versions
-  return (
-    r.reviewId ??
-    r.id ??
-    r.feedbackId ??
-    r.hashCode ??
-    r.externalId ??
-    r.uuid ??
-    ""
-  );
+  return r.reviewId ?? r.id ?? r.feedbackId ?? r.hashCode ?? r.externalId ?? r.uuid ?? "";
 }
 
 function extractContent(r: any): string {
-  // Direct text fields
   const direct = r.review ?? r.content ?? r.comment ?? r.opinion ?? r.text ?? r.description ?? "";
   if (direct) return direct;
 
-  // Kiyoh reviewContent array
   if (Array.isArray(r.reviewContent)) {
     const opinion = r.reviewContent.find(
       (c: any) => c.questionGroup === "DEFAULT_OPINION" || c.questionGroup === "OPINION" || c.questionGroup === "CONTENT"
     );
     if (opinion?.review) return opinion.review;
-
-    // Fallback: first entry with text
     const anyWithText = r.reviewContent.find((c: any) => c.review || c.content || c.text);
     if (anyWithText) return anyWithText.review ?? anyWithText.content ?? anyWithText.text ?? "";
   }
-
   return "";
 }
 
@@ -169,8 +152,7 @@ function extractPending(data: any, locationId: string, locationName: string, sou
   return reviews
     .filter((r: any) => {
       const status = (r.status ?? r.statusCode ?? r.reviewStatus ?? "").toUpperCase();
-      // Include reviews that are NOT published or verified
-      // Empty status = likely pending/new, so include those too
+      // Only include reviews that are potentially pending/in review
       return (
         status === "" ||
         status === "PENDING" ||
@@ -187,9 +169,7 @@ function extractPending(data: any, locationId: string, locationName: string, sou
       locationId,
       locationName,
       source,
-      // Normalize ID to a consistent field for the UI
       _id: extractReviewId(r),
-      // Pre-extract content so UI doesn't need to guess
       _content: extractContent(r),
     }));
 }
@@ -203,9 +183,9 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const forceRefresh = searchParams.get("force") === "1";
-    const loadAll = searchParams.get("all") === "1"; // Load ALL locations, not just pending
+    const loadAll = searchParams.get("all") === "1"; 
 
-    // Check memory cache (skip if force refresh)
+    // Check memory cache
     const now = Date.now();
     if (!forceRefresh && globalModerationCache && (now - globalModerationCache.timestamp < CACHE_TTL)) {
       console.log("Serving moderation queue from memory cache");
@@ -216,17 +196,10 @@ export async function GET(request: NextRequest) {
     const tokenKV = process.env.KV_API_TOKEN;
 
     if (!tokenKIYOH && !tokenKV) {
-      return NextResponse.json({
-        reviews: [],
-        total: 0,
-        locationCount: 0,
-        locationsChecked: 0,
-        timestamp: now,
-        error: "Geen API tokens geconfigureerd. Voeg KIYOH_API_TOKEN en/of KV_API_TOKEN toe aan de environment variables."
-      });
+      return NextResponse.json({ error: "API tokens missing" }, { status: 500 });
     }
 
-    // 1. Load all locations from both platforms
+    // 1. Load all locations
     const [kiyohLocations, kvLocations] = await Promise.all([
       tokenKIYOH ? fetchAllLocations(KIYOH_BASE, tokenKIYOH, "kiyoh") : [],
       tokenKV ? fetchAllLocations(KV_BASE, tokenKV, "kv") : []
@@ -235,16 +208,14 @@ export async function GET(request: NextRequest) {
     const allLocations = [...kiyohLocations, ...kvLocations];
     const totalLocations = allLocations.length;
 
-    // 2. Decide which locations to check
-    // If ?all=1, check ALL locations (slower but complete)
-    // Otherwise only check locations where the API says there are pending reviews
+    // 2. Identify locations to check
     const locationsToCheck = loadAll
       ? allLocations
       : allLocations.filter(loc => (loc.numberReviewsPending ?? 0) > 0);
 
     console.log(`Checking ${locationsToCheck.length} of ${totalLocations} locations for pending reviews...`);
 
-    // 3. Fetch sequentially with a safe delay
+    // 3. Fetch sequentially with a safe delay (1500ms between locations)
     const pendingReviews: any[] = [];
     for (let i = 0; i < locationsToCheck.length; i++) {
       const loc = locationsToCheck[i];
@@ -262,9 +233,8 @@ export async function GET(request: NextRequest) {
       );
       pendingReviews.push(...reviews);
 
-      // Avoid Cloudflare bans via sequential delay (skip last)
       if (i < locationsToCheck.length - 1) {
-        await sleep(500);
+        await sleep(1500); // 1.5s sequential delay
       }
     }
 
@@ -278,7 +248,6 @@ export async function GET(request: NextRequest) {
       fromCache: false
     };
 
-    // Update in-memory cache (don't cache "all" mode)
     if (!loadAll) {
       globalModerationCache = { data: responseData, timestamp: now };
     }
