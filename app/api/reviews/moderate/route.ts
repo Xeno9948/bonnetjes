@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
       // Report review for abuse/removal
       endpoint = `${baseUrl}/review/abuse`;
       method = "PUT";
-      payload = { locationId, tenantId, reviewId, reasonAbuse: reasonAbuse || "FAKE_REVIEW" };
+      payload = { locationId, tenantId, reviewId, abuseReason: reasonAbuse || "FAKE_REVIEW" };
       break;
 
     case "changerequest":

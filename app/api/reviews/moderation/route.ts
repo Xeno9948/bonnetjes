@@ -9,40 +9,66 @@ const KV_BASE = "https://www.klantenvertellen.nl/v1/publication";
 
 const TENANT_ID: Record<string, string> = { kiyoh: "98", kv: "99" };
 
-// Fetch all locations first, then get moderation queue for each
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Fetch all locations - returns them with numberReviewsPending so we can filter
 async function fetchAllLocations(baseUrl: string, token: string, source: string) {
   const since = "2019-01-01T00:00:00.000+00:00";
   const url = `${baseUrl}/review/locations/latest?updatedSince=${encodeURIComponent(since)}&dateSince=${encodeURIComponent(since)}&limit=10000`;
   const res = await fetch(url, {
     headers: { "X-Publication-Api-Token": token },
-    next: { revalidate: 1800 }
+    next: { revalidate: 1800 } // Cache 30 min
   });
   if (!res.ok) return [];
   const data = await res.json();
   return (Array.isArray(data) ? data : []).map((loc: any) => ({
     locationId: loc.locationId ?? loc.id,
     locationName: loc.locationName ?? loc.name,
+    numberReviewsPending: loc.numberReviewsPending ?? 0,
     source
   }));
 }
 
-async function fetchModerationForLocation(
+// Fetch reviews for a single location - look for non-published ones
+async function fetchPendingReviewsForLocation(
   baseUrl: string,
   token: string,
   locationId: string,
   tenantId: string,
-  source: string
+  source: string,
+  locationName: string
 ) {
-  const url = `${baseUrl}/review/external/moderation?locationId=${locationId}&tenantId=${tenantId}&limit=250`;
+  const url = `${baseUrl}/review/external?locationId=${locationId}&tenantId=${tenantId}&orderBy=CREATE_DATE&sortOrder=DESC&limit=50`;
   try {
     const res = await fetch(url, {
       headers: { "X-Publication-Api-Token": token },
-      next: { revalidate: 60 }
+      cache: "no-store"
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      if (res.status === 429) {
+        // Rate limited - wait and retry once
+        await sleep(2000);
+        const retry = await fetch(url, {
+          headers: { "X-Publication-Api-Token": token },
+          cache: "no-store"
+        });
+        if (!retry.ok) return [];
+        const d = await retry.json();
+        const reviews = Array.isArray(d) ? d : (d.reviews ?? d.content ?? []);
+        return reviews
+          .filter((r: any) => r.status && r.status !== "PUBLISHED" && r.status !== "VERIFIED")
+          .map((r: any) => ({ ...r, locationId, locationName, source }));
+      }
+      return [];
+    }
     const data = await res.json();
     const reviews = Array.isArray(data) ? data : (data.reviews ?? data.content ?? []);
-    return reviews.map((r: any) => ({ ...r, locationId, source }));
+    // Filter to non-published / pending only
+    return reviews
+      .filter((r: any) => r.status && r.status !== "PUBLISHED" && r.status !== "VERIFIED")
+      .map((r: any) => ({ ...r, locationId, locationName, source }));
   } catch {
     return [];
   }
@@ -58,54 +84,49 @@ export async function GET() {
     const tokenKIYOH = process.env.KIYOH_API_TOKEN;
     const tokenKV = process.env.KV_API_TOKEN;
 
-    // 1. Load all locations from both platforms
+    // 1. Load all locations from both platforms in parallel (this is 2 calls, fine)
     const [kiyohLocations, kvLocations] = await Promise.all([
-      tokenKIYOH ? fetchAllLocations(KIYOH_BASE, tokenKIYOH, "kiyoh") : Promise.resolve([]),
-      tokenKV ? fetchAllLocations(KV_BASE, tokenKV, "kv") : Promise.resolve([])
+      tokenKIYOH ? fetchAllLocations(KIYOH_BASE, tokenKIYOH, "kiyoh") : [],
+      tokenKV ? fetchAllLocations(KV_BASE, tokenKV, "kv") : []
     ]);
 
-    // 2. Fetch moderation queue for each location (limit concurrency to avoid rate limits)
-    const BATCH = 10;
-    const allReviews: any[] = [];
+    const allLocations = [...kiyohLocations, ...kvLocations];
+    const locationCount = allLocations.length;
 
-    const fetchBatch = async (locations: any[], baseUrl: string, token: string) => {
-      for (let i = 0; i < locations.length; i += BATCH) {
-        const batch = locations.slice(i, i + BATCH);
-        const results = await Promise.all(
-          batch.map((loc: any) =>
-            fetchModerationForLocation(
-              baseUrl,
-              token,
-              loc.locationId,
-              TENANT_ID[loc.source] ?? "98",
-              loc.source
-            )
-          )
-        );
-        results.forEach(r => allReviews.push(...r));
+    // 2. Only fetch reviews from locations that actually have pending reviews
+    // This dramatically reduces API calls (from 250 to maybe 5-10)
+    const locationsWithPending = allLocations.filter(
+      loc => (loc.numberReviewsPending ?? 0) > 0
+    );
+
+    // 3. Fetch sequentially with small delay to avoid rate limiting
+    const pendingReviews: any[] = [];
+    for (const loc of locationsWithPending) {
+      const baseUrl = loc.source === "kv" ? KV_BASE : KIYOH_BASE;
+      const token = loc.source === "kv" ? tokenKV : tokenKIYOH;
+      if (!token) continue;
+
+      const reviews = await fetchPendingReviewsForLocation(
+        baseUrl,
+        token,
+        loc.locationId,
+        TENANT_ID[loc.source] ?? "98",
+        loc.source,
+        loc.locationName
+      );
+      pendingReviews.push(...reviews);
+
+      // Polite delay between calls — 300ms — avoids Cloudflare rate limiting
+      if (locationsWithPending.indexOf(loc) < locationsWithPending.length - 1) {
+        await sleep(300);
       }
-    };
-
-    await Promise.all([
-      tokenKIYOH ? fetchBatch(kiyohLocations, KIYOH_BASE, tokenKIYOH) : Promise.resolve(),
-      tokenKV ? fetchBatch(kvLocations, KV_BASE, tokenKV) : Promise.resolve()
-    ]);
-
-    // Create a locationId -> locationName map for enriching the reviews
-    const locationMap: Record<string, string> = {};
-    [...kiyohLocations, ...kvLocations].forEach((loc: any) => {
-      locationMap[loc.locationId] = loc.locationName;
-    });
-
-    const enriched = allReviews.map((r: any) => ({
-      ...r,
-      locationName: locationMap[r.locationId] ?? r.locationId
-    }));
+    }
 
     return NextResponse.json({
-      reviews: enriched,
-      total: enriched.length,
-      locationCount: kiyohLocations.length + kvLocations.length
+      reviews: pendingReviews,
+      total: pendingReviews.length,
+      locationCount,
+      locationsWithPending: locationsWithPending.length
     });
   } catch (error) {
     console.error("Moderation queue error:", error);
